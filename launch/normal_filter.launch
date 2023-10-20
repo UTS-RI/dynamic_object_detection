@@ -1,0 +1,13 @@
+<launch>
+    <rosparam command="load" file="$(find dynamic_detector)/cfg/parameters.yaml" />
+    <node name="point_cloud_align" pkg="dynamic_detector" type="apply_tf" output="screen">
+        <remap from="pointcloud" to="pointcloud" />
+        <remap from="transform" to="T_map_os1_lidar" />
+    </node>
+    <node name="dynamic_detector" pkg="dynamic_detector" type="dynamic_detector" output="screen">
+    </node>
+    <node name="point_cloud_upsampling" pkg="dynamic_detector" type="upsampling" output="screen">
+    </node>
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find dynamic_detector)/cfg/rviz_config.rviz" />
+</launch>

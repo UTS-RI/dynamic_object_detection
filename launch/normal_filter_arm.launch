@@ -1,0 +1,14 @@
+<launch>
+    <rosparam command="load" file="$(find dynamic_detector)/cfg/parameters_arm.yaml" />
+    <node name="point_cloud_align" pkg="dynamic_detector" type="apply_tf" output="screen">
+        <remap from="pointcloud" to="camera/depth/color/points" />
+        <remap from="transform" to="depth_pose" />
+    </node>
+    <node name="dynamic_detector" pkg="dynamic_detector" type="dynamic_detector" output="screen">
+    </node>
+    <node name="point_cloud_upsampling" pkg="dynamic_detector" type="upsampling" output="screen">
+    </node>
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find dynamic_detector)/cfg/rviz_config_arm.rviz" />
+    <node name="tf2" pkg="tf2_ros" type="static_transform_publisher" args="0 0 0 0 0 0 1 map base_link" />
+</launch>

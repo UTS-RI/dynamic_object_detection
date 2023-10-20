@@ -1,0 +1,9 @@
+neighborhood_size: 50
+neighborhood_size_upsampling: 100
+neighborhood_radius: 0.0005
+neighborhood_radius_upsampling: 0.0001
+use_radius_search: true
+downsampling_bin_number: 100
+voxel_size: 0.005
+dynamic_threshold: 0.012
+number_of_clouds_used_as_padding: 5
