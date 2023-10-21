@@ -9,6 +9,9 @@ Ground truth:
 
 ### Datasets:
 
+> [!NOTE]  
+> Some of the preprocessed ros bags are available [here](https://drive.google.com/drive/folders/1QsDQK4fyBwQuhsV-uN1_ljqh-wp1RCJF?usp=share_link) (`hauptgebaeude` folder for the DOALS dataset and `HRI` folder for the data from the UR5).
+
 The method has been tested on a dataset collected with a UR5 robot arm.
 
 We have also tested our approach on the [undistorded scans](https://github.com/ethz-asl/lidar_undistortion/) from the Urban Dynamic Objects LiDAR Dataset (DOALS) ([project page](https://projects.asl.ethz.ch/datasets/doku.php?id=doals), [direct link to downloads](http://robotics.ethz.ch/~asl-datasets/2021_ICRA_dynamic_object_lidar_dataset/scenes/)). See images above for samples from the dataset.
