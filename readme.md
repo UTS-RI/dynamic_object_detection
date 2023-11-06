@@ -41,8 +41,8 @@ sudo apt install build-essential cmake libeigen3-dev libomp-dev git
 
 ```bash
 cd normal_filter
-git clone --recurse-submodules https://github.com/nmwsharp/polyscope.git
-ln -s ../normal_filter ~/catkin_ws/src
+git clone git@github.com:UTS-RI/dynamic_object_detection.git
+ln -s ../dynamic_object_detection ~/catkin_ws/src
 cd ~/catkin_ws
 catkin_make
 ```
@@ -51,8 +51,6 @@ catkin_make
 
 ```bash
 roscore
-cd ~/dev/data/hauptgebaeude/sequence_1 && rosbag play -l 2023-09-15-08-56-49.bag # undistorded scans
-rosparam load ~/dev/dynamic_lidar/normal_filter/src/parameters.yaml
-rosrun normal_filter apply_tf
-rosrun normal_filter process_clouds_centered
+cd ~/dev/data/hauptgebaeude/sequence_1 && rosbag play -l sequence_1.bag # undistorded scans
+roslaunch dynamic_detector normal_filter.launch
 ```
