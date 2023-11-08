@@ -1,4 +1,0 @@
-<launch>
-    <node name="normal_filter_debug" pkg="dynamic_detector" type="process_clouds_centered_minimal" output="screen">
-    </node>
-</launch>
