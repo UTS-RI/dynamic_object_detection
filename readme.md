@@ -40,7 +40,6 @@ sudo apt install build-essential cmake libeigen3-dev libomp-dev git
 ### To build:
 
 ```bash
-cd normal_filter
 git clone git@github.com:UTS-RI/dynamic_object_detection.git
 ln -s ../dynamic_object_detection ~/catkin_ws/src
 cd ~/catkin_ws
@@ -49,8 +48,16 @@ catkin_make
 
 ### To run:
 
+For the DOALS dataset:
 ```bash
 roscore
-cd ~/dev/data/hauptgebaeude/sequence_1 && rosbag play -l sequence_1.bag # undistorded scans
+rosbag play -l sequence_1.bag # undistorded LIDAR scans
 roslaunch dynamic_detector normal_filter.launch
+```
+
+For the UR5 dataset:
+```bash
+roscore
+rosbag play -l object_move_with_poses.bag
+roslaunch dynamic_detector normal_filter_arm.launch
 ```
