@@ -1,5 +1,5 @@
 # dynamic_object_detection
-Ros implementation of "Dynamic Object Detection in Range data using Spatiotemporal Normals".
+Ros implementation of "Dynamic Object Detection in Range data using Spatiotemporal Normals" (arXiv link [here](https://arxiv.org/abs/2310.13273)).
 
 Predictions (left) versus ground truth (right):
 
