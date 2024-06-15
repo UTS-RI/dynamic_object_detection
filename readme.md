@@ -1,5 +1,5 @@
 # dynamic_object_detection
-Ros implementation of "Dynamic Object Detection in Range data using Spatiotemporal Normals" (arXiv link [here](https://arxiv.org/abs/2310.13273)).
+Ros implementation of "Dynamic Object Detection in Range data using Spatiotemporal Normals" (published at the Australasian Conference on Robotics and Automation (ACRA) and available [here](https://ssl.linklings.net/conferences/acra/acra2023_proceedings/views/includes/files/pap125s2.pdf)).
 
 Predictions (left) versus ground truth (right):
 
@@ -8,13 +8,11 @@ Predictions (left) versus ground truth (right):
 ### Paper:
 If you find this work useful for your research, please consider citing our paper (submitted to ACRA 2023):
   ```bibtex
-  @misc{falque2023dynamic,
+  @inproceedings{falque2023dynamic,
       title={Dynamic Object Detection in Range data using Spatiotemporal Normals}, 
       author={Raphael Falque and Cedric Le Gentil and Fouad Sukkar},
-      year={2023},
-      eprint={2310.13273},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO}
+      booktitle={Australasian Conference on Robotics and Automation, ACRA},
+      year={2023}
   }
   ```
 
