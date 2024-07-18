@@ -39,7 +39,7 @@ sudo apt install build-essential cmake libeigen3-dev libomp-dev git
 
 ```bash
 git clone git@github.com:UTS-RI/dynamic_object_detection.git
-ln -s ../dynamic_object_detection ~/catkin_ws/src
+ln -s ./dynamic_object_detection ~/catkin_ws/src
 cd ~/catkin_ws
 catkin_make
 ```
