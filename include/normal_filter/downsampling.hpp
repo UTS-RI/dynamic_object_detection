@@ -15,6 +15,8 @@
 #include <map>
 #include <iostream>
 
+#include "ankerl/unordered_dense.h"
+
 
 static inline void getMinMax(const Eigen::MatrixXf &in_cloud, Eigen::Vector3f &min_point, Eigen::Vector3f &max_point)
 {
@@ -55,7 +57,7 @@ std::tuple<Eigen::MatrixXf, std::vector<int>> voxel_grid_downsampling(Eigen::Mat
 	*/
 
 	// create the voxel structure as anunordered map with tuple of {x, y, z} as a key and a vector of {time, index} as a value
-	std::map<std::tuple<int, int, int>, int> voxels;
+	ankerl::unordered_dense::map<std::tuple<int, int, int>, int> voxels;
 
 	// transform the input_cloud into a matrix of voxel indices
 	Eigen::MatrixXi input_cloud_voxel_indices = ((input_cloud / voxel_size).array().floor().matrix()).cast<int>();

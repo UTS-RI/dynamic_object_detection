@@ -58,6 +58,8 @@ void ApplyTF::processNewCloud(const boost::shared_ptr<const sensor_msgs::PointCl
     sensor_msgs::PointCloud2 out;
     pcl_ros::transformPointCloud(transform.matrix(), *cloud, out);
 
+    out.header.frame_id = "map";
+
     // publish the new cloud
     pub_new_cloud_.publish(out);
 }

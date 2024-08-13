@@ -1,9 +1,6 @@
-neighborhood_size: 50
-neighborhood_size_upsampling: 100
 neighborhood_radius: 0.3
 neighborhood_radius_upsampling: 0.2
-use_radius_search_: true
-downsampling_bin_number: 600
 voxel_size: 0.25
 dynamic_threshold: 0.1
-number_of_clouds_used_as_padding: 10
+number_of_clouds_used_as_padding: 5
+time_multiplier: 1e-9  # Time multiplier for the time field of the point cloud

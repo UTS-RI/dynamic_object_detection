@@ -173,7 +173,7 @@ Eigen::VectorXf Upsampling::update_dynamic_scores(const Eigen::MatrixXf& cloud, 
             // query the kdtree
             std::vector<int> indexes;
             if (use_radius_search_)
-                indexes = kd_tree.radius_search(query_point, neighbourhood_radius_);
+                indexes = kd_tree.radius_search(query_point, neighbourhood_radius_*neighbourhood_radius_);
             else
                 indexes = kd_tree.KNN_search(query_point, neighborhood_size_);
 

@@ -81,10 +81,8 @@ sensor_msgs::PointCloud2 cloudAndScoreToRosMsg(const Eigen::MatrixXf& pts, const
     sensor_msgs::PointCloud2 output;
     pcl::toROSMsg(cloud, output);
     output.header = header;
-    output.header.frame_id = "map";
     return output;
 }
-
 // Function to convert a pointcloud to a ros message
 sensor_msgs::PointCloud2 cloudToRosMsg(const Eigen::MatrixXf& pts, const std_msgs::Header& header)
 {

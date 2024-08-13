@@ -49,13 +49,13 @@ catkin_make
 For the DOALS dataset:
 ```bash
 roscore
-rosbag play -l sequence_1.bag # undistorded LIDAR scans
+rosbag play sequence_1.bag # undistorded LIDAR scans
 roslaunch dynamic_detector normal_filter.launch
 ```
 
 For the UR5 dataset:
 ```bash
 roscore
-rosbag play -l object_move_with_poses.bag
+rosbag play object_move_with_poses.bag
 roslaunch dynamic_detector normal_filter_arm.launch
 ```

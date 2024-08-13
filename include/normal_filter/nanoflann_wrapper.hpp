@@ -105,7 +105,7 @@ class nanoflann_wrapper {
             // nanoflann supports concurrent build
             nanoflann::KDTreeSingleIndexAdaptorParams params{};
             params.n_thread_build = 1;
-            params.leaf_max_size = 10;
+            params.leaf_max_size = 100;
 
             this->kd_tree_index =
                 std::make_shared<nanoflann::KDTreeSingleIndexAdaptor<
@@ -160,6 +160,8 @@ class nanoflann_wrapper {
                                                nanoflann::SearchParameters(k));
 
             // pack results back into std::vector<int>
+            indexes.reserve(ret_indexes.size());
+            distances.reserve(out_dists_sqr.size());
             for (int i = 0; i < ret_indexes.size(); i++) {
                 indexes.push_back(ret_indexes.at(i));
                 distances.push_back(out_dists_sqr.at(i));
@@ -183,6 +185,7 @@ class nanoflann_wrapper {
                 this->kd_tree_index->radiusSearch(&query_pt[0], search_radius, ret_matches);
             
             std::vector<int> indexes;
+            indexes.reserve(nMatches);
             for (size_t i = 0; i < nMatches; i++)
                 indexes.push_back(ret_matches[i].first);
 

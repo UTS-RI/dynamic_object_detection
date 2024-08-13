@@ -17,7 +17,87 @@
 #include "normal_filter/downsampling.hpp"
 #include "normal_filter/EigenToROS.hpp"
 
+#include "phtree-cpp/include/phtree/phtree.h"
+#include "phtree-cpp/include/phtree/filter.h"
+
+#include "normal_filter/types.h"
+#include "normal_filter/ros_utils.h"
+
 using namespace std::chrono;
+
+
+// Typedefs for the PhTree
+typedef improbable::phtree::PhPointD<3> PointPh;
+template <typename V>
+using TreePh = improbable::phtree::PhTreeD<3, V>;
+
+typedef std::tuple<int, int, int> CellIndex;
+
+
+// Typedefs for the HashMap
+template <typename V>
+using HashMap = ankerl::unordered_dense::map<CellIndex, V>;
+
+
+struct Cell
+{
+    Vec4 point_sum = Vec4::Zero();
+    Mat4 covariance_sum = Mat4::Zero();
+    int count = 0;
+
+    template <typename T>
+    Cell(const PointTemplated<T>& point)
+    {
+        Vec4 temp = Vec4((double)point.x, (double)point.y, (double)point.z, (double)point.t);
+        point_sum = temp;
+        covariance_sum = temp * temp.transpose();
+        count = 1;
+    }
+
+    template <typename T>
+    void addPoint(const PointTemplated<T>& point)
+    {
+        Vec4 temp = Vec4((double)point.x, (double)point.y, (double)point.z, (double)point.t);
+        point_sum += temp;
+        covariance_sum += temp * temp.transpose();
+        count++;
+    }
+
+    template <typename T>
+    bool removePoint(const PointTemplated<T>& point)
+    {
+        Vec4 temp = Vec4(point.x, point.y, point.z, point.t);
+        point_sum -= temp;
+        covariance_sum -= temp * temp.transpose();
+        count--;
+
+        return count == 0;
+    }
+
+
+    Vec3 getCentroid()
+    {
+        return point_sum.segment<3>(0) / (double)count;
+    }
+
+};
+
+typedef std::shared_ptr<Cell> CellPtr;
+
+
+// Functor to query the neighbors of a point in the PhTree radius search
+struct PhNeighborQuery
+{
+    void operator()(const PointPh& point, CellPtr& cell)
+    {
+        neighbors.push_back({point, cell});
+    }
+    std::vector<std::pair<PointPh, CellPtr> > neighbors;
+};
+
+
+
+
 
 
 class stackedPointCloud
@@ -27,55 +107,116 @@ public:
     ~stackedPointCloud();
 
 private:
-    Eigen::MatrixXf cloud_stack_;
-    std::vector <Eigen::MatrixXf> clouds_waiting_to_be_processed_;
-    std::vector <std::vector<int>> in_cloud_samples_to_be_processed_;
-    std::vector <ros::Time> timestamps_waiting_to_be_processed_;
-    std::vector <std_msgs::Header> headers_waiting_to_be_processed_;
-
     // actual params
-    int neighborhood_size_ = 200;
     double neighbourhood_radius_ = 0.5;
-    bool use_radius_search_ = true;
-    int downsampling_bin_number_ = 600; // size of the voxel grid, currently scale divided by downsampling_bin_number_
-    float voxel_size_ = 0.1;
+    double downsampled_voxel_size_ = 0.1;
+    double inv_downsampled_voxel_size_ = 1.0/downsampled_voxel_size_;
+    double voxel_size_ = 0.05;
+    double inv_voxel_size_ = 1.0/voxel_size_;
+    double half_voxel_size_ = voxel_size_/2.0;
 
     double dynamic_threshold_ = 0.5;
     int number_of_clouds_used_as_padding_ = 20; // number of scans used as padding before and after the current scan
 
     // internal variables
-    bool visualization_ = true;
-    int number_of_clouds_stored_ = 0;
     int max_number_of_clouds_stored_ = 1 + 2*number_of_clouds_used_as_padding_;
-    std::vector <int> cloud_sizes_;
     int cloud_counter_ = 0;
     ros::Time stamp_zero_;
-    ros::Time stamp_last_;
+
+    // time multiplier
+    double time_multiplier_;
     
-    // pointer to the kd-tree object
-    nanoflann_wrapper<float> *kd_tree;
+    //// pointer to the kd-tree object
+    //nanoflann_wrapper<float> *kd_tree;
+
+
+    // Phtree structure
+    TreePh<CellPtr> phtree_;
+
+    // HashMap structure
+    HashMap<CellPtr> local_map_;
+
+    // Downsampled point clouds
+    std::vector<std::vector<Pointf>> downsampled_clouds_;
+    std::vector<std_msgs::Header> headers_;
+    
+    // Buffer pointer the position of where the next cloud will be stored
+    int buffer_pointer_ = 0;
+
 
     // ros stuff
     ros::NodeHandle nh_;
     ros::Subscriber sub;
     ros::Publisher pub_;
     ros::Publisher pub_stacked_pointcloud_;
+    ros::Publisher pub_local_map_debug_;
     
-    void processNewCloud(const boost::shared_ptr<const sensor_msgs::PointCloud2> &input);
+    void processNewCloud(const sensor_msgs::PointCloud2ConstPtr &input);
     void stackCloud(Eigen::MatrixXf &new_cloud, std::vector<int> &in_cloud_samples, ros::Time &stamp_current, const std_msgs::Header &header_current);
+
+    void publishStackedPointCloud(const std_msgs::Header &header);
+    void publishLocalMapDebug(const std_msgs::Header &header);
+
+
+
+    std::vector<Pointf> downSampleCloud(const std::vector<Pointf>& cloud);
+
+
+    CellIndex getCellIndex(const Pointf& point)
+    {
+        int x = std::floor(point.x * inv_voxel_size_);
+        int y = std::floor(point.y * inv_voxel_size_);
+        int z = std::floor(point.z * inv_voxel_size_);
+
+        return {x, y, z};
+    }
+
+    PointPh getPointPh(const CellIndex& cell_index)
+    {
+        PointPh point;
+        point[0] = std::get<0>(cell_index)*voxel_size_ + half_voxel_size_;
+        point[1] = std::get<1>(cell_index)*voxel_size_ + half_voxel_size_;
+        point[2] = std::get<2>(cell_index)*voxel_size_ + half_voxel_size_;
+
+        return point;
+    }
+
+
+    void incrementBufferPointer()
+    {
+        buffer_pointer_ = (buffer_pointer_ + 1) % max_number_of_clouds_stored_;
+    }
+
+    std::vector<Pointf>& getOldestCloud()
+    {
+        return downsampled_clouds_[buffer_pointer_];
+    }
+
+    std::vector<Pointf>& getMiddleCloud()
+    {
+        return downsampled_clouds_[(buffer_pointer_ + number_of_clouds_used_as_padding_) % max_number_of_clouds_stored_];
+    }
+
+    std_msgs::Header& getMiddleHeader()
+    {
+        return headers_[(buffer_pointer_ + number_of_clouds_used_as_padding_) % max_number_of_clouds_stored_];
+    }
 };
 
 stackedPointCloud::stackedPointCloud()
 {
     // get the rosparams
-    nh_.getParam("neighborhood_size", neighborhood_size_);
     nh_.getParam("neighborhood_radius", neighbourhood_radius_);
-    nh_.getParam("use_radius_search", use_radius_search_);
-    nh_.getParam("downsampling_bin_number", downsampling_bin_number_);
-    nh_.getParam("voxel_size", voxel_size_);
+    nh_.getParam("voxel_size", downsampled_voxel_size_);
     nh_.getParam("dynamic_threshold", dynamic_threshold_);
     nh_.getParam("number_of_clouds_used_as_padding", number_of_clouds_used_as_padding_);
-    nh_.getParam("visualization", visualization_);
+    nh_.param("time_multiplier", time_multiplier_, 1e-9);
+
+    inv_downsampled_voxel_size_ = 1.0/downsampled_voxel_size_;
+    voxel_size_ = std::max(std::min(0.05,downsampled_voxel_size_), downsampled_voxel_size_/3.0);
+    inv_voxel_size_ = 1.0/voxel_size_;
+    half_voxel_size_ = voxel_size_/2.0;
+
 
     // set the subscribers
     sub = nh_.subscribe("registered_pointcloud", 100, &stackedPointCloud::processNewCloud, this);
@@ -85,6 +226,10 @@ stackedPointCloud::stackedPointCloud()
     // set the publishers
     pub_ = nh_.advertise<sensor_msgs::PointCloud2>("pointcloud_dynamic_score_downsampled", 1000);
     pub_stacked_pointcloud_ = nh_.advertise<sensor_msgs::PointCloud2>("stacked_pointcloud", 1000);
+    pub_local_map_debug_ = nh_.advertise<sensor_msgs::PointCloud2>("local_map_debug", 1000);
+
+    downsampled_clouds_.resize(max_number_of_clouds_stored_);
+    headers_.resize(max_number_of_clouds_stored_);
 }
 
 
@@ -94,201 +239,233 @@ stackedPointCloud::~stackedPointCloud()
 }
 
 
-void stackedPointCloud::stackCloud(Eigen::MatrixXf &new_cloud, 
-                                   std::vector<int> &in_cloud_samples, 
-                                   ros::Time &stamp_current, 
-                                   const std_msgs::Header &header_current)
+
+void stackedPointCloud::publishStackedPointCloud(const std_msgs::Header &header)
 {
-    // add new_cloud to the cloud
-    if (number_of_clouds_stored_ == 0)
+
+    if(pub_stacked_pointcloud_.getNumSubscribers() > 0)
     {
-        // initiate the cloud
-        cloud_stack_ = new_cloud;
+        int max_id = std::min(cloud_counter_, max_number_of_clouds_stored_);
 
-        // update the stacked clouds info in the class
-        cloud_sizes_.push_back(new_cloud.cols());
-        number_of_clouds_stored_++;
+        std::vector<Pointf> stacked_cloud;
+        for(int i = 0; i < max_id; i++)
+        {
+            std::vector<Pointf> cloud = downsampled_clouds_[i];
+            stacked_cloud.insert(stacked_cloud.end(), cloud.begin(), cloud.end());
+        }
+
+        sensor_msgs::PointCloud2 output = ptsVecToPointCloud2MsgInternal(stacked_cloud, header);
+
+        pub_stacked_pointcloud_.publish(output);
     }
-    else if (number_of_clouds_stored_ < max_number_of_clouds_stored_)
+}
+
+void stackedPointCloud::publishLocalMapDebug(const std_msgs::Header &header)
+{
+    if(pub_local_map_debug_.getNumSubscribers() > 0)
     {
-        // stack the cloud
-        cloud_stack_.conservativeResize(Eigen::NoChange, cloud_stack_.cols() + new_cloud.cols());
-        cloud_stack_.rightCols(new_cloud.cols()) = new_cloud;
+        std::vector<Pointf> local_map_cloud;
+        local_map_cloud.reserve(local_map_.size());
+        for(const auto& [cell_index, cell] : local_map_)
+        {
+            Vec3 centroid = cell->getCentroid();
+            Pointf point = {(float)centroid(0), (float)centroid(1), (float)centroid(2), 0.0};
+            local_map_cloud.push_back(point);
+        }
 
-        // update the stacked clouds info in the class
-        cloud_sizes_.push_back(new_cloud.cols());
-        number_of_clouds_stored_++;
+        sensor_msgs::PointCloud2 output = ptsVecToPointCloud2MsgInternal(local_map_cloud, header);
+        pub_local_map_debug_.publish(output);
     }
-    else
-    {
-        // remove the first cloud (shift the right rows to the top)
-        cloud_stack_.leftCols(cloud_stack_.cols() - cloud_sizes_.at(0)) = cloud_stack_.rightCols(cloud_stack_.cols() - cloud_sizes_.at(0));
-
-        // add the last cloud at the right
-        cloud_stack_.conservativeResize(Eigen::NoChange, cloud_stack_.cols() - cloud_sizes_.at(0) + new_cloud.cols());
-        cloud_stack_.rightCols(new_cloud.cols()) = new_cloud;
-
-        // update the stacked clouds info in the class
-        cloud_sizes_.erase(cloud_sizes_.begin());
-        cloud_sizes_.push_back(new_cloud.cols());
-    }
-
-    // stack new_cloud and stamp_current into clouds_waiting_to_be_processed_ and timestamps_waiting_to_be_processed_
-    clouds_waiting_to_be_processed_.push_back(new_cloud);
-    in_cloud_samples_to_be_processed_.push_back(in_cloud_samples);
-    timestamps_waiting_to_be_processed_.push_back(stamp_current);
-    headers_waiting_to_be_processed_.push_back(header_current);
-
-    // remove the excess clouds
-    if (clouds_waiting_to_be_processed_.size() > number_of_clouds_used_as_padding_+1)
-    {
-        clouds_waiting_to_be_processed_.erase(clouds_waiting_to_be_processed_.begin());
-        in_cloud_samples_to_be_processed_.erase(in_cloud_samples_to_be_processed_.begin());
-        timestamps_waiting_to_be_processed_.erase(timestamps_waiting_to_be_processed_.begin());
-        headers_waiting_to_be_processed_.erase(headers_waiting_to_be_processed_.begin());
-    }
-    
 }
 
 
-void stackedPointCloud::processNewCloud(const boost::shared_ptr<const sensor_msgs::PointCloud2> &input)
+
+
+
+void stackedPointCloud::processNewCloud(const sensor_msgs::PointCloud2ConstPtr &input)
 {
+    ROS_INFO("---------------------------------");
+
+    ros::Time begin = ros::Time::now();
+
     // set the first timestamp to stamp_zero_
     if (cloud_counter_ == 0)
     {
         stamp_zero_ = input->header.stamp;
-        stamp_last_ = stamp_zero_;
     }
-    else // drop the first scan to have a correct linear interpolation for the points timestamps (from the previous timestamp to current timestamp)
+    cloud_counter_++;
+
+
+    auto [cloud, has_time] = pointCloud2MsgToPtsVec<float>(input, time_multiplier_, false);
+    std::vector<Pointf> downsampled_cloud = downSampleCloud(cloud);
+    double time_offset = (input->header.stamp - stamp_zero_).toSec();
+    for(auto& point : downsampled_cloud)
     {
-        ros::Time begin = ros::Time::now();
+        point.t += time_offset;
+    }
 
-        // convert the cloud to eigen matrix of size 4xN
-        pcl::PCLPointCloud2 pcl_pc2;
-        pcl_conversions::toPCL(*input, pcl_pc2);
-        pcl::PointCloud<pcl::PointXYZ>::Ptr temp_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::fromPCLPointCloud2(pcl_pc2, *temp_cloud);
-        Eigen::MatrixXf new_cloud = temp_cloud->getMatrixXfMap();
+    ros::Time end = ros::Time::now();
+    ROS_INFO_STREAM("Received and downsampled cloud in " << (end - begin).toSec()*1000 << " ms");
 
-        // get the timestamp of the cloud
-        ros::Time stamp_current = input->header.stamp;
-        double timestamps_beginning = (stamp_last_-stamp_zero_).toSec();
-        double timestamps_end = (stamp_current-stamp_zero_).toSec();
 
-        // set the last row into a vector of the timestamp
-        Eigen::VectorXf timestamps_linear = Eigen::VectorXf::LinSpaced(new_cloud.cols(), timestamps_beginning, timestamps_end);
-        new_cloud.row(3) = timestamps_linear;
 
-        // downsampling, in_cloud_samples contains the index of the points from the input cloud that end up in the output cloud
-        auto [downsampled_cloud, in_cloud_samples] = voxel_grid_downsampling(new_cloud, voxel_size_);
 
-        //resize new_cloud
-        new_cloud.conservativeResize(Eigen::NoChange, downsampled_cloud.cols());
-        new_cloud.topRows(3) = downsampled_cloud.topRows(3);
 
-        // stack the new cloud into cloud_
-        stackCloud(new_cloud, in_cloud_samples, stamp_current, input->header);
+    ros::Time start_bis = ros::Time::now();
 
-        ros::Time end_of_preprocessing = ros::Time::now();
-        ROS_INFO("Time for stacking the data: %f", (end_of_preprocessing - begin).toSec());
+    // If buffer is full, remove the oldest cloud from the local map
+    if(cloud_counter_ >= max_number_of_clouds_stored_)
+    {
+        std::vector<Pointf> oldest_cloud = getOldestCloud();
 
-        // check if there are enough clouds in the stack to perform the computation
-        if (number_of_clouds_stored_ == max_number_of_clouds_stored_ &&
-            clouds_waiting_to_be_processed_.size() == number_of_clouds_used_as_padding_+1)
+
+        for(const auto& point : oldest_cloud)
         {
-            Eigen::MatrixXf cloud_to_process = clouds_waiting_to_be_processed_.at(0);
-
-            // kdtree with float data
-            ros::Time begin2 = ros::Time::now();
-            Eigen::MatrixXf cloud_float = cloud_stack_.topRows(3);
-            kd_tree = new nanoflann_wrapper<float>(cloud_float);
-            ros::Time end2 = ros::Time::now();
-            ROS_INFO("Time for building the kd-tree: %f", (end2 - begin2).toSec());
-
-            // for all points in the latest scan perform a knn search
-            ros::Time begin3 = ros::Time::now();
-            Eigen::VectorXf dynamic_scores = Eigen::VectorXf::Zero(cloud_to_process.cols());
-            std::vector <int> indices_prediction;
-
-            ROS_INFO("Querry for %ld points", cloud_to_process.cols());
-            if (use_radius_search_)
-                ROS_INFO("Using radius search with radius %f", neighbourhood_radius_);
-            else
-                ROS_INFO("Using knn search with k %d", neighborhood_size_);
-
-            #pragma omp parallel for
-            for (int i = 0; i < cloud_to_process.cols(); i++)
+            CellIndex cell_index = getCellIndex(point);
+            auto it = local_map_.find(cell_index);
+            if(it != local_map_.end())
             {
-                Eigen::Vector3f query_point;
-                Eigen::MatrixXf neighborhood;
-
-                // query the kdtree
-                query_point = cloud_to_process.col(i).topRows(3);
-                std::vector<int> indexes;
-                if (use_radius_search_)
-                    indexes = kd_tree->radius_search(query_point, neighbourhood_radius_);
-                else
-                    indexes = kd_tree->KNN_search(query_point, neighborhood_size_);
-
-                // get the neighborhood
-                neighborhood = Eigen::MatrixXf::Zero(4, indexes.size());
-                for (int j = 0; j < indexes.size(); j++)
+                if(it->second->removePoint(point))
                 {
-                    neighborhood.col(j) = cloud_stack_.col(indexes.at(j));
+                    local_map_.erase(it);
+                    phtree_.erase(getPointPh(cell_index));
                 }
+            }
+        }
+        end = ros::Time::now();
+        ROS_INFO_STREAM("Removed oldest cloud from PhTree in " << (end - start_bis).toSec()*1000 << " ms");
+    }
 
-                if (indexes.size() > 10) { // otherwise the normal computation does not make sense
-                    Eigen::MatrixXf neighborhood_temp = neighborhood.transpose();
 
-                    // compute the covariance: see https://stackoverflow.com/a/15142446/2562693
-                    Eigen::MatrixXf centered = neighborhood_temp.rowwise() - neighborhood_temp.colwise().mean();
-                    Eigen::MatrixXf cov = (centered.adjoint() * centered) / float(neighborhood_temp.rows() - 1);
 
-                    // compute the eigenvalues and eigenvectors
-                    Eigen::EigenSolver<Eigen::MatrixXf> es(cov);
-                    Eigen::VectorXf eigenvalues = es.eigenvalues().real();
-                    Eigen::MatrixXf eigenvectors = es.eigenvectors().real();
+    start_bis = ros::Time::now();
+    // Add the downsampled cloud to the local map (HashMap and PhTree)
+    downsampled_clouds_[buffer_pointer_] = downsampled_cloud;
+    headers_[buffer_pointer_] = input->header;
 
-                    // get the index of the smallest eigenvector
-                    int min_index = 0; eigenvalues.minCoeff(&min_index);
-                    Eigen::VectorXf smallest_eigenvector = eigenvectors.col(min_index);
+    for(const auto& point : downsampled_cloud)
+    {
+        CellIndex cell_index = getCellIndex(point);
+        if(local_map_.find(cell_index) == local_map_.end())
+        {
+            CellPtr new_cell = std::make_shared<Cell>(point);
+            local_map_[cell_index] = new_cell;
+            phtree_.emplace(getPointPh(cell_index), new_cell);
+        }
+        else
+        {
+            local_map_[cell_index]->addPoint(point);
+        }
+    }
 
-                    // get the time component of the smallest eigenvector
-                    float dynamic_score = abs(smallest_eigenvector(3));
+    end = ros::Time::now();
+    ROS_INFO_STREAM("Added downsampled cloud to local map in " << (end - start_bis).toSec()*1000 << " ms");
 
-                    // add the dynamic score to the vector
-                    dynamic_scores(i) = dynamic_score;
+
+    // If buffer is full, perform the dynamic detection
+    if(cloud_counter_ >= max_number_of_clouds_stored_)
+    {
+        start_bis = ros::Time::now();
+        
+        std::vector<Pointf> middle_cloud = getMiddleCloud();
+
+        std::vector<float> dynamic_scores(middle_cloud.size(), 0.0);
+        double distance_threshold = neighbourhood_radius_ + std::sqrt(3)*voxel_size_;
+        #pragma omp parallel for
+        for(int i = 0; i < middle_cloud.size(); i++)
+        {
+            Pointf& point = middle_cloud[i];
+            PointPh query_point = {(double)point.x, (double)point.y, (double)point.z};
+
+            PhNeighborQuery query;
+            phtree_.for_each(query, improbable::phtree::FilterSphere(query_point, distance_threshold, phtree_.converter()));
+
+            Vec4 point_sum = Vec4::Zero();
+            Mat4 covariance_sum = Mat4::Zero();
+            int count = 0;
+
+            for(const auto& [neighbor_point, neighbor_cell] : query.neighbors)
+            {
+                Vec3 centroid = neighbor_cell->getCentroid();
+                if((centroid - point.vec3d()).norm() < neighbourhood_radius_)
+                {
+                    point_sum += neighbor_cell->point_sum;
+                    covariance_sum += neighbor_cell->covariance_sum;
+                    count += neighbor_cell->count;
                 }
-                
             }
 
-            // iterate through the dynamic scores and find the indices of the points with the highest dynamic scores                            
-            for (int i = 0; i < dynamic_scores.size(); i++)
-                if (dynamic_scores(i) > dynamic_threshold_)
-                    indices_prediction.push_back(i);
 
-            ros::Time end3 = ros::Time::now();
-            ROS_INFO("Time for queries and dynamic scores computation: %f", (end3 - begin3).toSec());
+            if(count > 10)
+            {
+                Vec4 mean = point_sum / (double)count;
+                Mat4 covariance = covariance_sum / (double)count - mean * mean.transpose();
 
-            // publish the dynamic scores
-            if (pub_.getNumSubscribers() > 0)
-            {
-                sensor_msgs::PointCloud2 output = cloudAndScoreToRosMsg(cloud_to_process, dynamic_scores, headers_waiting_to_be_processed_.at(0));
-                pub_.publish(output);
-            }
-            if (pub_stacked_pointcloud_.getNumSubscribers() > 0)
-            {
-                sensor_msgs::PointCloud2 output = cloudToRosMsg(cloud_stack_.topRows(3), headers_waiting_to_be_processed_.at(0));
-                pub_stacked_pointcloud_.publish(output);
+                Eigen::EigenSolver<Mat4> es(covariance);
+                Vec4 eigenvalues = es.eigenvalues().real();
+                Mat4 eigenvectors = es.eigenvectors().real();
+
+                int min_index = 0;
+                eigenvalues.minCoeff(&min_index);
+                Vec4 smallest_eigenvector = eigenvectors.col(min_index);
+
+                float dynamic_score = std::abs(smallest_eigenvector(3));
+                dynamic_scores[i] = dynamic_score;
             }
 
         }
 
-        stamp_last_ = stamp_current;
+        end = ros::Time::now();
+        ROS_INFO_STREAM("Dynamic score computation in " << (end - start_bis).toSec()*1000 << " ms");
+
+        // publish the dynamic scores
+        if (pub_.getNumSubscribers() > 0)
+        {
+            sensor_msgs::PointCloud2 output = cloudAndScoreToRosMsg(middle_cloud, dynamic_scores, getMiddleHeader());
+            pub_.publish(output);
+        }
     }
 
-    cloud_counter_++;
 
+    // publish the stacked pointcloud
+    publishStackedPointCloud(input->header);
+    publishLocalMapDebug(input->header);
+
+
+    incrementBufferPointer();
+
+    end = ros::Time::now();
+    ROS_INFO_STREAM("Total time (including prints and publishing) " << (end - begin).toSec()*1000 << " ms");
+}
+
+
+std::vector<Pointf> stackedPointCloud::downSampleCloud(const std::vector<Pointf>& cloud)
+{
+    // Downsample the cloud
+    std::vector<Pointf> downsampled_cloud;
+    downsampled_cloud.reserve(cloud.size());
+
+    HashMap<Pointf> scan_hash_map;
+
+    for (const auto& point : cloud)
+    {
+        if(point.vec3f().norm() > 0.1)
+        {
+            CellIndex cell_index = std::make_tuple(std::floor(point.x * inv_downsampled_voxel_size_),
+                                                   std::floor(point.y * inv_downsampled_voxel_size_),
+                                                   std::floor(point.z * inv_downsampled_voxel_size_));
+
+            auto it = scan_hash_map.find(cell_index);
+            scan_hash_map[cell_index] = point;
+        }
+    }
+
+    for (const auto& [cell_index, point] : scan_hash_map)
+    {
+        downsampled_cloud.push_back(point);
+    }
+
+    return downsampled_cloud;
 }
 
 
